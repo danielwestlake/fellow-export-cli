@@ -318,7 +318,7 @@ class BackupService:
             event_guid=note_data.get('event_guid'),
             event_start=event_start,
             event_end=event_end,
-            event_is_all_day=note_data.get('event_is_all_day', False),
+            event_is_all_day=note_data.get('event_is_all_day'),
             event_attendees=event_attendees,
             author_name=author.get('name') if isinstance(author, dict) else None,
             author_id=author.get('id') if isinstance(author, dict) else None,
