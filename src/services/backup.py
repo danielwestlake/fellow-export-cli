@@ -310,6 +310,9 @@ class BackupService:
                 if attendee.get('email')
             ]
         
+        # Extract author fields once
+        author_dict = author if isinstance(author, dict) else {}
+        
         return Note(
             id=note_data['id'],
             title=note_data.get('title'),
@@ -320,8 +323,8 @@ class BackupService:
             event_end=event_end,
             event_is_all_day=note_data.get('event_is_all_day'),
             event_attendees=event_attendees,
-            author_name=author.get('name') if isinstance(author, dict) else None,
-            author_id=author.get('id') if isinstance(author, dict) else None,
+            author_name=author_dict.get('name'),
+            author_id=author_dict.get('id'),
             fellow_created_at=fellow_created_at,
             fellow_updated_at=fellow_updated_at
         )
