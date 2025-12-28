@@ -125,6 +125,10 @@ class FellowAPIClient:
             'pagination': {
                 'cursor': cursor,
                 'page_size': min(page_size, 50)  # API max is 50
+            },
+            'include': {
+                'event_attendees': True,
+                'content_markdown': True
             }
         }
         

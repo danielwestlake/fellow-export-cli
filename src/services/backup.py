@@ -278,11 +278,50 @@ class BackupService:
                              note_id=note_data['id'],
                              error=str(e))
         
+        # Parse event timestamps
+        event_start = None
+        if note_data.get('event_start'):
+            try:
+                event_start = datetime.fromisoformat(
+                    note_data['event_start'].replace('Z', '+00:00')
+                )
+            except Exception as e:
+                logger.warning("failed_to_parse_event_start",
+                             note_id=note_data['id'],
+                             error=str(e))
+        
+        event_end = None
+        if note_data.get('event_end'):
+            try:
+                event_end = datetime.fromisoformat(
+                    note_data['event_end'].replace('Z', '+00:00')
+                )
+            except Exception as e:
+                logger.warning("failed_to_parse_event_end",
+                             note_id=note_data['id'],
+                             error=str(e))
+        
+        # Parse event_attendees (list of dicts with email keys)
+        event_attendees = []
+        if note_data.get('event_attendees'):
+            event_attendees = [
+                attendee.get('email') 
+                for attendee in note_data['event_attendees']
+                if attendee.get('email')
+            ]
+        
         return Note(
             id=note_data['id'],
-            content=note_data.get('content', ''),
-            author_name=author.get('name'),
-            author_id=author.get('id'),
+            title=note_data.get('title'),
+            content=note_data.get('content'),
+            content_markdown=note_data.get('content_markdown'),
+            event_guid=note_data.get('event_guid'),
+            event_start=event_start,
+            event_end=event_end,
+            event_is_all_day=note_data.get('event_is_all_day', False),
+            event_attendees=event_attendees,
+            author_name=author.get('name') if isinstance(author, dict) else None,
+            author_id=author.get('id') if isinstance(author, dict) else None,
             fellow_created_at=fellow_created_at,
             fellow_updated_at=fellow_updated_at
         )

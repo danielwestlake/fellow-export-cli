@@ -93,28 +93,49 @@ class DatabaseService:
     
     def upsert_note(self, note: Note):
         """
-        Save or update note using upsert pattern.
+        Save or update note using upsert pattern with attendees.
         INSERT ... ON DUPLICATE KEY UPDATE handles both new and existing notes.
         """
         now = datetime.utcnow()
         with self.transaction() as cursor:
             query = """
                 INSERT INTO notes (
-                    id, content, author_name, author_id,
+                    id, title, content, content_markdown, event_guid,
+                    event_start, event_end, event_is_all_day,
+                    author_name, author_id,
                     fellow_created_at, fellow_updated_at,
                     created_at, updated_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
+                    title = VALUES(title),
                     content = VALUES(content),
+                    content_markdown = VALUES(content_markdown),
+                    event_guid = VALUES(event_guid),
+                    event_start = VALUES(event_start),
+                    event_end = VALUES(event_end),
+                    event_is_all_day = VALUES(event_is_all_day),
                     author_name = VALUES(author_name),
                     author_id = VALUES(author_id),
                     fellow_updated_at = VALUES(fellow_updated_at),
                     updated_at = VALUES(updated_at)
             """
             cursor.execute(query, (
-                note.id, note.content, note.author_name, note.author_id,
+                note.id, note.title, note.content, note.content_markdown,
+                note.event_guid, note.event_start, note.event_end,
+                note.event_is_all_day, note.author_name, note.author_id,
                 note.fellow_created_at, note.fellow_updated_at, now, now
             ))
+            
+            # Delete existing attendees and insert new ones
+            cursor.execute("DELETE FROM event_attendees WHERE note_id = %s", (note.id,))
+            if note.event_attendees:
+                attendee_query = """
+                    INSERT INTO event_attendees (note_id, email, created_at)
+                    VALUES (%s, %s, %s)
+                """
+                attendee_data = [(note.id, email, now) for email in note.event_attendees]
+                cursor.executemany(attendee_query, attendee_data)
+            
             logger.debug("note_upserted", note_id=note.id)
     
     def upsert_notes_batch(self, notes: List[Note]):

@@ -177,7 +177,7 @@ def test_connection():
         api_client = FellowAPIClient()
         
         # Make a simple request to fetch one page
-        response = api_client.fetch_notes(page=1, per_page=1)
+        response = api_client.fetch_notes(cursor=None, page_size=1)
         
         click.echo(f"   ✅ API connection successful")
         api_client.close()
