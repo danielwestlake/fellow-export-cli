@@ -182,7 +182,7 @@ class BackupService:
     
     def _fetch_all_notes(self, updated_after: Optional[datetime] = None) -> List[Note]:
         """
-        Fetch all notes from API with pagination.
+        Fetch all notes from API with cursor-based pagination.
         
         Args:
             updated_after: Optional filter for incremental backup
@@ -191,16 +191,15 @@ class BackupService:
             List of all Note objects from all pages
         """
         all_notes = []
-        seen_ids = set()
-        page = 1
-        per_page = 100
-        max_pages = 1000  # Safety limit
+        cursor = None  # Start with None for first page
+        page_num = 1
+        page_size = 50  # API max
         
-        while page <= max_pages:
+        while True:
             try:
                 response = self.api.fetch_notes(
-                    page=page,
-                    per_page=per_page,
+                    cursor=cursor,
+                    page_size=page_size,
                     updated_after=updated_after
                 )
                 
@@ -210,45 +209,36 @@ class BackupService:
                 page_info = notes_container.get('page_info', {}) if isinstance(notes_container, dict) else {}
                 
                 # Parse notes from API response
-                new_notes_count = 0
                 for note_data in notes_data:
-                    note_id = note_data.get('id')
-                    
-                    # Skip if we've already seen this note (duplicate detection)
-                    if note_id in seen_ids:
-                        continue
-                    
-                    seen_ids.add(note_id)
-                    new_notes_count += 1
-                    
                     try:
                         note = self._parse_note(note_data)
                         all_notes.append(note)
                     except Exception as e:
                         logger.error("note_parsing_failed", 
-                                   note_id=note_id or 'unknown',
+                                   note_id=note_data.get('id', 'unknown'),
                                    error=str(e))
                 
                 logger.info("notes_page_fetched", 
-                           page=page,
+                           page=page_num,
                            count=len(notes_data),
-                           new_notes=new_notes_count,
                            total_so_far=len(all_notes))
                 
-                # Stop if we got no new notes (all duplicates) or no results
-                if new_notes_count == 0 or len(notes_data) == 0:
-                    logger.info("pagination_complete", reason="no_new_notes")
+                # Get next cursor from page_info
+                next_cursor = page_info.get('cursor')
+                
+                # Stop if cursor is None (last page) or no data returned
+                if next_cursor is None or len(notes_data) == 0:
+                    logger.info("pagination_complete", 
+                               reason="no_cursor" if next_cursor is None else "no_data",
+                               total_notes=len(all_notes))
                     break
                 
-                # Stop if we got fewer results than requested (likely last page)
-                if len(notes_data) < per_page:
-                    logger.info("pagination_complete", reason="partial_page")
-                    break
-                
-                page += 1
+                # Continue with next page
+                cursor = next_cursor
+                page_num += 1
                 
             except Exception as e:
-                logger.error("notes_fetch_failed", page=page, error=str(e))
+                logger.error("notes_fetch_failed", page=page_num, error=str(e))
                 break
         
         return all_notes
@@ -288,11 +278,50 @@ class BackupService:
                              note_id=note_data['id'],
                              error=str(e))
         
+        # Parse event timestamps
+        event_start = None
+        if note_data.get('event_start'):
+            try:
+                event_start = datetime.fromisoformat(
+                    note_data['event_start'].replace('Z', '+00:00')
+                )
+            except Exception as e:
+                logger.warning("failed_to_parse_event_start",
+                             note_id=note_data['id'],
+                             error=str(e))
+        
+        event_end = None
+        if note_data.get('event_end'):
+            try:
+                event_end = datetime.fromisoformat(
+                    note_data['event_end'].replace('Z', '+00:00')
+                )
+            except Exception as e:
+                logger.warning("failed_to_parse_event_end",
+                             note_id=note_data['id'],
+                             error=str(e))
+        
+        # Parse event_attendees (list of dicts with email keys)
+        event_attendees = []
+        if note_data.get('event_attendees'):
+            event_attendees = [
+                attendee.get('email') 
+                for attendee in note_data['event_attendees']
+                if attendee.get('email')
+            ]
+        
         return Note(
             id=note_data['id'],
-            content=note_data.get('content', ''),
-            author_name=author.get('name'),
-            author_id=author.get('id'),
+            title=note_data.get('title'),
+            content=note_data.get('content'),
+            content_markdown=note_data.get('content_markdown'),
+            event_guid=note_data.get('event_guid'),
+            event_start=event_start,
+            event_end=event_end,
+            event_is_all_day=note_data.get('event_is_all_day'),
+            event_attendees=event_attendees,
+            author_name=author.get('name') if isinstance(author, dict) else None,
+            author_id=author.get('id') if isinstance(author, dict) else None,
             fellow_created_at=fellow_created_at,
             fellow_updated_at=fellow_updated_at
         )

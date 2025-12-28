@@ -106,30 +106,36 @@ class FellowAPIClient:
     
     def fetch_notes(
         self,
-        page: int = 1,
-        per_page: int = 100,
+        cursor: Optional[str] = None,
+        page_size: int = 50,
         updated_after: Optional[datetime] = None
     ) -> Dict[str, Any]:
         """
         Fetch notes from Fellow.app API using POST /api/v1/notes.
         
         Args:
-            page: Page number (1-indexed)
-            per_page: Results per page (max 100)
+            cursor: Pagination cursor (None for first page)
+            page_size: Results per page (1-50, default 50)
             updated_after: Optional filter for incremental backup
             
         Returns:
-            Dict with 'notes' and 'pagination' keys
+            Dict with 'notes' containing 'data' and 'page_info' keys
         """
         body = {
-            'page': page,
-            'per_page': per_page
+            'pagination': {
+                'cursor': cursor,
+                'page_size': min(page_size, 50)  # API max is 50
+            },
+            'include': {
+                'event_attendees': True,
+                'content_markdown': True
+            }
         }
         
         if updated_after:
             body['updated_after'] = updated_after.isoformat()
         
-        logger.debug("fetching_notes", page=page, per_page=per_page)
+        logger.debug("fetching_notes", cursor=cursor, page_size=page_size)
         
         response = self._make_request('POST', '/api/v1/notes', json=body)
         
