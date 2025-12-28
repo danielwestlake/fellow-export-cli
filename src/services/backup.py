@@ -191,10 +191,12 @@ class BackupService:
             List of all Note objects from all pages
         """
         all_notes = []
+        seen_ids = set()
         page = 1
         per_page = 100
+        max_pages = 1000  # Safety limit
         
-        while True:
+        while page <= max_pages:
             try:
                 response = self.api.fetch_notes(
                     page=page,
@@ -202,27 +204,45 @@ class BackupService:
                     updated_after=updated_after
                 )
                 
-                notes_data = response.get('notes', [])
-                pagination = response.get('pagination', {})
+                # Parse nested structure: {"notes": {"data": [...], "page_info": {...}}}
+                notes_container = response.get('notes', {})
+                notes_data = notes_container.get('data', []) if isinstance(notes_container, dict) else []
+                page_info = notes_container.get('page_info', {}) if isinstance(notes_container, dict) else {}
                 
                 # Parse notes from API response
+                new_notes_count = 0
                 for note_data in notes_data:
+                    note_id = note_data.get('id')
+                    
+                    # Skip if we've already seen this note (duplicate detection)
+                    if note_id in seen_ids:
+                        continue
+                    
+                    seen_ids.add(note_id)
+                    new_notes_count += 1
+                    
                     try:
                         note = self._parse_note(note_data)
                         all_notes.append(note)
                     except Exception as e:
                         logger.error("note_parsing_failed", 
-                                   note_id=note_data.get('id', 'unknown'),
+                                   note_id=note_id or 'unknown',
                                    error=str(e))
                 
                 logger.info("notes_page_fetched", 
                            page=page,
                            count=len(notes_data),
+                           new_notes=new_notes_count,
                            total_so_far=len(all_notes))
                 
-                # Check if there are more pages
-                total_pages = pagination.get('total_pages', 1)
-                if page >= total_pages:
+                # Stop if we got no new notes (all duplicates) or no results
+                if new_notes_count == 0 or len(notes_data) == 0:
+                    logger.info("pagination_complete", reason="no_new_notes")
+                    break
+                
+                # Stop if we got fewer results than requested (likely last page)
+                if len(notes_data) < per_page:
+                    logger.info("pagination_complete", reason="partial_page")
                     break
                 
                 page += 1
