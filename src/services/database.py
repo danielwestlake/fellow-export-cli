@@ -2,7 +2,7 @@
 import os
 import json
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Set
 import mysql.connector
 from mysql.connector import Error as MySQLError
 from contextlib import contextmanager
@@ -230,3 +230,108 @@ class DatabaseService:
             if result:
                 return result[0]
         return None
+
+    def ensure_export_schema(self):
+        """Create export-related tables if they don't exist."""
+        with self.transaction() as cursor:
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS client_domains (
+                    email_domain VARCHAR(255) PRIMARY KEY,
+                    client_name VARCHAR(500) NOT NULL,
+                    created_at DATETIME NOT NULL,
+                    updated_at DATETIME NOT NULL
+                ) ENGINE=InnoDB
+                  DEFAULT CHARSET=utf8mb4
+                  COLLATE=utf8mb4_unicode_ci
+            """)
+        logger.info("export_schema_ensured")
+
+    def get_all_notes_with_attendees(
+        self, limit: Optional[int] = None
+    ) -> List[Note]:
+        """Fetch notes joined with attendees, ordered by event_start DESC."""
+        with self.transaction() as cursor:
+            query = """
+                SELECT id, title, content, content_markdown,
+                       event_guid, event_start, event_end,
+                       event_is_all_day, author_name, author_id,
+                       fellow_created_at, fellow_updated_at,
+                       created_at, updated_at
+                FROM notes
+                ORDER BY event_start DESC, fellow_created_at DESC
+            """
+            if limit:
+                query += f" LIMIT {int(limit)}"
+            cursor.execute(query)
+            rows = cursor.fetchall()
+
+            notes = []
+            for row in rows:
+                note = Note(
+                    id=row[0], title=row[1], content=row[2],
+                    content_markdown=row[3], event_guid=row[4],
+                    event_start=row[5], event_end=row[6],
+                    event_is_all_day=bool(row[7]),
+                    author_name=row[8], author_id=row[9],
+                    fellow_created_at=row[10],
+                    fellow_updated_at=row[11],
+                    created_at=row[12], updated_at=row[13]
+                )
+                notes.append(note)
+
+            # Batch-load attendees for all notes
+            if notes:
+                note_ids = [n.id for n in notes]
+                placeholders = ','.join(['%s'] * len(note_ids))
+                cursor.execute(
+                    f"SELECT note_id, email FROM event_attendees "
+                    f"WHERE note_id IN ({placeholders})",
+                    note_ids
+                )
+                attendee_rows = cursor.fetchall()
+                attendees_by_note: Dict[str, List[str]] = {}
+                for note_id, email in attendee_rows:
+                    attendees_by_note.setdefault(
+                        note_id, []
+                    ).append(email)
+                for note in notes:
+                    note.event_attendees = attendees_by_note.get(
+                        note.id, []
+                    )
+
+            logger.info("notes_fetched_with_attendees", count=len(notes))
+            return notes
+
+    def get_distinct_attendee_domains(
+        self, exclude_domains: Set[str]
+    ) -> List[str]:
+        """Get unique email domains from event_attendees."""
+        with self.transaction() as cursor:
+            cursor.execute("""
+                SELECT DISTINCT SUBSTRING_INDEX(email, '@', -1)
+                AS domain FROM event_attendees
+                ORDER BY domain
+            """)
+            all_domains = [row[0] for row in cursor.fetchall()]
+            return [
+                d for d in all_domains
+                if d not in exclude_domains
+            ]
+
+    def upsert_client_domain(self, domain: str, client_name: str):
+        """Insert client domain mapping, skip if already exists."""
+        now = datetime.utcnow()
+        with self.transaction() as cursor:
+            cursor.execute("""
+                INSERT IGNORE INTO client_domains
+                    (email_domain, client_name, created_at, updated_at)
+                VALUES (%s, %s, %s, %s)
+            """, (domain, client_name, now, now))
+
+    def get_client_domain_map(self) -> Dict[str, str]:
+        """Load all client domain mappings as {domain: client_name}."""
+        with self.transaction() as cursor:
+            cursor.execute(
+                "SELECT email_domain, client_name FROM client_domains"
+            )
+            return {row[0]: row[1] for row in cursor.fetchall()}

@@ -12,6 +12,7 @@ from src.lib.logger import configure_logger, get_logger
 from src.services.fellow_api import FellowAPIClient
 from src.services.database import DatabaseService
 from src.services.backup import BackupService
+from src.services.export import ExportService
 
 # Configure logging
 log_level = os.getenv('LOG_LEVEL', 'INFO')
@@ -215,6 +216,121 @@ def test_connection():
     
     click.echo()
     click.echo("✅ All connections successful!")
+
+
+@cli.command()
+def discover_clients():
+    """Scan attendee emails and generate client domain mappings."""
+    try:
+        db_service = DatabaseService()
+        db_service.connect()
+        export_service = ExportService(db_service)
+
+        click.echo("Scanning attendee email domains...")
+        click.echo(
+            f"Excluding company domains: "
+            f"{', '.join(export_service.company_domains)}"
+        )
+        click.echo()
+
+        domain_map = export_service.discover_domains()
+
+        if not domain_map:
+            click.echo("No external domains found.")
+            db_service.disconnect()
+            return
+
+        click.echo(f"Found {len(domain_map)} client domain(s):")
+        click.echo()
+        click.echo(f"  {'Domain':<40} {'Client Name'}")
+        click.echo(f"  {'-' * 40} {'-' * 30}")
+        for domain, name in sorted(domain_map.items()):
+            click.echo(f"  {domain:<40} {name}")
+
+        click.echo()
+        click.echo(
+            "Review and edit in MySQL if needed:"
+        )
+        click.echo(
+            "  SELECT * FROM client_domains;"
+        )
+        click.echo(
+            "  UPDATE client_domains "
+            "SET client_name='New Name' "
+            "WHERE email_domain='domain.com';"
+        )
+
+        db_service.disconnect()
+
+    except Exception as e:
+        logger.error("discover_clients_failed", error=str(e))
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    '--output-dir', default='meeting-notes',
+    help='Output directory for markdown files'
+)
+@click.option(
+    '--demo', is_flag=True,
+    help='Export one note per client for preview'
+)
+@click.option(
+    '--limit', type=int, default=None,
+    help='Limit total notes exported'
+)
+@click.option(
+    '--dry-run', is_flag=True,
+    help='Show file tree without writing files'
+)
+@click.option(
+    '--client', default=None,
+    help='Export only notes for a specific client'
+)
+@click.option(
+    '--verbose', is_flag=True,
+    help='Enable verbose logging'
+)
+def export(output_dir, demo, limit, dry_run, client, verbose):
+    """Export notes as markdown files organized by client."""
+    if verbose:
+        configure_logger('DEBUG')
+
+    try:
+        db_service = DatabaseService()
+        db_service.connect()
+        export_service = ExportService(
+            db_service, output_dir=output_dir
+        )
+
+        if dry_run:
+            click.echo("DRY RUN - files that would be created:")
+            click.echo()
+
+        report = export_service.export_notes(
+            limit=limit,
+            demo=demo,
+            dry_run=dry_run,
+            client_filter=client,
+        )
+
+        click.echo(report.format_summary())
+
+        if report.status == 'success' and not dry_run:
+            target = output_dir + ("-demo" if demo else "")
+            click.echo(f"Files written to: {target}/")
+
+        db_service.disconnect()
+
+        if report.status != 'success':
+            sys.exit(1)
+
+    except Exception as e:
+        logger.error("export_failed", error=str(e))
+        click.echo(f"Error: {str(e)}", err=True)
+        sys.exit(1)
 
 
 if __name__ == '__main__':

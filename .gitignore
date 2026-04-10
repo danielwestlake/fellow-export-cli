@@ -50,3 +50,7 @@ Thumbs.db
 # Database
 *.sql.backup
 *.db
+
+# Exported notes
+meeting-notes/
+meeting-notes-demo/
