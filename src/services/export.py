@@ -74,6 +74,7 @@ class ExportService:
         db_service: DatabaseService,
         output_dir: str = "meeting-notes",
         company_domains: Optional[Set[str]] = None,
+        owner_email: Optional[str] = None,
     ):
         self.db = db_service
         self.output_dir = Path(output_dir)
@@ -81,6 +82,10 @@ class ExportService:
             d.strip() for d in
             os.getenv('COMPANY_DOMAINS', 'cursor.co.uk').split(',')
         }
+        self.owner_email = (
+            owner_email
+            or os.getenv('OWNER_EMAIL', 'daniel@cursor.co.uk')
+        ).lower()
 
     def discover_domains(self) -> Dict[str, str]:
         """Find all non-company attendee domains and generate
@@ -129,6 +134,35 @@ class ExportService:
 
         # All attendees are company employees — internal meeting
         return "Cursor"
+
+    def _is_one_to_one(
+        self, note: Note, client: str
+    ) -> Optional[str]:
+        """Check if a Cursor internal note is a 1-to-1 meeting.
+
+        Returns the other person's name if it is, None otherwise.
+        """
+        if client != "Cursor":
+            return None
+        company_attendees = [
+            e for e in note.event_attendees
+            if '@' in e
+            and e.split('@')[1].lower() in self.company_domains
+        ]
+        if len(company_attendees) != 2:
+            return None
+        if self.owner_email not in (
+            e.lower() for e in company_attendees
+        ):
+            return None
+        # Get the other person's name from their email
+        for email in company_attendees:
+            if email.lower() != self.owner_email:
+                local = email.split('@')[0]
+                return local.replace('.', ' ').replace(
+                    '-', ' '
+                ).title()
+        return None
 
     def _resolve_author(self, note: Note) -> str:
         """Get author name, falling back to first company attendee."""
@@ -275,20 +309,47 @@ class ExportService:
                     report.notes_skipped += 1
                     continue
 
-                if demo and client in demo_clients_seen:
+                # Check if this is a 1-to-1 Cursor meeting
+                other_person = self._is_one_to_one(
+                    note, client
+                )
+                if other_person:
+                    demo_key = f"1-to-1/{other_person}"
+                else:
+                    demo_key = client
+
+                if demo and demo_key in demo_clients_seen:
                     report.notes_skipped += 1
                     continue
 
                 year = self._get_note_year(note)
-                folder_name = slugify(client) or "_uncategorized"
-                folder_key = f"{year}/{folder_name}"
-                if folder_key not in used_names:
-                    used_names[folder_key] = set()
 
-                filename = self.generate_filename(
-                    note, used_names[folder_key]
-                )
-                file_path = output_dir / year / folder_name / filename
+                if other_person:
+                    person_slug = slugify(other_person)
+                    folder_key = f"1-to-1/{year}/{person_slug}"
+                    if folder_key not in used_names:
+                        used_names[folder_key] = set()
+                    filename = self.generate_filename(
+                        note, used_names[folder_key]
+                    )
+                    file_path = (
+                        output_dir / "1-to-1" / year
+                        / person_slug / filename
+                    )
+                else:
+                    folder_name = (
+                        slugify(client) or "_uncategorized"
+                    )
+                    folder_key = f"{year}/{folder_name}"
+                    if folder_key not in used_names:
+                        used_names[folder_key] = set()
+                    filename = self.generate_filename(
+                        note, used_names[folder_key]
+                    )
+                    file_path = (
+                        output_dir / year
+                        / folder_name / filename
+                    )
 
                 if dry_run:
                     print(f"  {file_path}")
@@ -311,7 +372,7 @@ class ExportService:
                 report.notes_exported += 1
                 clients_seen.add(client)
                 if demo:
-                    demo_clients_seen.add(client)
+                    demo_clients_seen.add(demo_key)
 
             except Exception as e:
                 logger.error(
