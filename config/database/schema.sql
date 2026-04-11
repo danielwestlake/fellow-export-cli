@@ -3,11 +3,11 @@
 -- Character Set: UTF-8 (utf8mb4) for full Unicode support
 
 -- Drop tables if they exist (for clean setup)
-DROP TABLE IF EXISTS notes;
-DROP TABLE IF EXISTS backup_metadata;
+DROP TABLE IF EXISTS fellow_notes;
+DROP TABLE IF EXISTS fellow_backup_metadata;
 
 -- Notes Table (standalone, no foreign keys)
-CREATE TABLE notes (
+CREATE TABLE fellow_notes (
     id VARCHAR(255) PRIMARY KEY COMMENT 'Fellow.app note ID',
     title VARCHAR(1000) COMMENT 'Note/meeting title',
     content TEXT COMMENT 'Note text content with full Unicode support',
@@ -30,21 +30,21 @@ CREATE TABLE notes (
 COMMENT='Fellow.app notes backup - standalone note records';
 
 -- Event Attendees Table (many-to-many relationship)
-CREATE TABLE event_attendees (
+CREATE TABLE fellow_event_attendees (
     id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'Auto-increment ID',
     note_id VARCHAR(255) NOT NULL COMMENT 'Reference to note',
     email VARCHAR(500) NOT NULL COMMENT 'Attendee email address',
     created_at DATETIME NOT NULL COMMENT 'Local record creation timestamp',
     INDEX idx_note_id (note_id) COMMENT 'Note lookups',
     INDEX idx_email (email) COMMENT 'Email lookups',
-    FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+    FOREIGN KEY (note_id) REFERENCES fellow_notes(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='Event attendees for notes';
+COMMENT='Event attendees for Fellow notes';
 
 -- Backup Metadata Table (for tracking sync state)
-CREATE TABLE backup_metadata (
+CREATE TABLE fellow_backup_metadata (
     key_name VARCHAR(255) PRIMARY KEY COMMENT 'Metadata key identifier',
     value TEXT NOT NULL COMMENT 'Metadata value (JSON or string)',
     updated_at DATETIME NOT NULL COMMENT 'Last update timestamp'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-COMMENT='Backup process metadata and sync state tracking';
+COMMENT='Fellow backup process metadata and sync state tracking';
